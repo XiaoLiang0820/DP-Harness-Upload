@@ -44,6 +44,24 @@ QLabel#statValue {{ font-size: 20px; font-weight: 700; color: {TEXT}; }}
 QLabel#statLabel {{ font-size: 12px; color: {MUTED}; }}
 QLabel#hint {{ font-size: 12px; color: {MUTED}; }}
 
+/* ---------- 高级设置 ---------- */
+QLabel#advTitle {{ font-size: 14px; font-weight: 700; color: {TEXT}; }}
+QLabel#advBadge {{
+    font-size: 10px; font-weight: 700; color: {WARN};
+    background: rgba(245,158,11,0.14);
+    border: 1px solid rgba(245,158,11,0.35);
+    border-radius: 7px; padding: 2px 7px;
+}}
+QLabel#advKey {{ font-size: 12px; color: {MUTED}; }}
+QLabel#advVal {{ font-size: 12px; color: {TEXT}; }}
+QLabel#advBig {{ font-size: 18px; font-weight: 700; color: {TEXT}; }}
+QLabel#advWarn {{
+    font-size: 13px; font-weight: 600; color: {WARN};
+    background: rgba(245,158,11,0.10);
+    border-left: 3px solid {WARN};
+    border-radius: 4px; padding: 8px 10px;
+}}
+
 /* ---------- 侧边栏 ---------- */
 QWidget#sidebar {{
     background: {SURFACE};
@@ -207,6 +225,43 @@ QComboBox QAbstractItemView {{
     selection-background-color: {ACCENT};
     outline: none;
 }}
+
+/* ---------- 滑块（高级设置） ---------- */
+QSlider {{
+    background: transparent;
+    min-height: 24px;
+}}
+QSlider::groove:horizontal {{
+    height: 6px;
+    background: #1F2A37;
+    border-radius: 3px;
+}}
+QSlider::sub-page:horizontal {{
+    height: 6px;
+    background: {ACCENT};
+    border-radius: 3px;
+}}
+QSlider::handle:horizontal {{
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 8px;
+    background: {TEXT};
+    border: 2px solid {ACCENT};
+}}
+QSlider::handle:horizontal:hover {{ background: #FFFFFF; }}
+QSlider:disabled::sub-page:horizontal {{ background: #2A3644; }}
+QSlider:disabled::handle:horizontal {{ border-color: #2A3644; background: #6B7A89; }}
+
+/* ---------- 状态栏 ---------- */
+QStatusBar {{
+    background: {SURFACE};
+    color: {MUTED};
+    border-top: 1px solid {BORDER};
+    font-size: 12px;
+    padding-left: 8px;
+}}
+QStatusBar::item {{ border: none; }}
 
 /* ---------- 提示框 ---------- */
 QToolTip {{

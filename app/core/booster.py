@@ -504,30 +504,26 @@ def set_cpu_limit(max_percent: int | None = None,
                   boost_mode: int | None = None) -> bool:
     """调整 CPU 频率相关设置（需管理员）.
 
+    实现委托给 hwtune：写入后会回读校验，被 OEM 电源服务或 BIOS 覆盖时
+    返回 False，而不是像旧实现那样只要 powercfg 退出码为 0 就报成功。
+
     max_percent: 最大处理器状态 0-100（越低越省电/低温，但也降性能）
     min_percent: 最小处理器状态 0-100
     boost_mode : 0=禁用 / 1=启用 / 2=激进
     """
-    ok = True
+    from . import hwtune
+
+    values: dict[str, int] = {}
     if max_percent is not None:
-        code, _ = admin.run_elevated_command([
-            "powercfg", "/setacvalueindex", "SCHEME_CURRENT",
-            _SUB_PROCESSOR, _PROCTHROTTLEMAX, str(int(max_percent))])
-        ok = ok and code == 0
+        values["max_state"] = int(max_percent)
     if min_percent is not None:
-        code, _ = admin.run_elevated_command([
-            "powercfg", "/setacvalueindex", "SCHEME_CURRENT",
-            _SUB_PROCESSOR, _PROCTHROTTLEMIN, str(int(min_percent))])
-        ok = ok and code == 0
+        values["min_state"] = int(min_percent)
     if boost_mode is not None:
-        admin.run_elevated_command([
-            "powercfg", "/attributes", _SUB_PROCESSOR, _PERFBOOSTMODE, "-ATTRIB_HIDE"])
-        code, _ = admin.run_elevated_command([
-            "powercfg", "/setacvalueindex", "SCHEME_CURRENT",
-            _SUB_PROCESSOR, _PERFBOOSTMODE, str(int(boost_mode))])
-        ok = ok and code == 0
-    admin.run_elevated_command(["powercfg", "/setactive", "SCHEME_CURRENT"])
-    return ok
+        values["boost_mode"] = int(boost_mode)
+    if not values:
+        return True
+    results = hwtune.apply_power_batch(values)
+    return all(res.get("ok") for res in results.values())
 
 
 def get_cpu_freq_mhz() -> int | None:

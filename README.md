@@ -22,7 +22,8 @@ A lightweight, safe **Windows game booster + junk cleaner** tailored for
 | 💽 磁盘分析 Disk Analysis | 各盘符顶层文件夹占用排行 + 200MB 以上大文件 Top 40 |
 | 🤖 自动清理 Auto Clean | 开机自启静默清理 + 每天定时清理（Windows 计划任务），结果记入日志供查看 |
 | 📌 性能悬浮窗 Perf Overlay | 无边框可拖动悬浮窗，实时显示 CPU / 内存 / 显存，三种样式、可缩放、可置顶 |
-| 🌡️ CPU 频率调节 CPU Tuning | 最大/最小处理器状态、性能提升模式（Windows 电源管理，无需第三方工具） |
+| 🌡️ CPU 频率调节 CPU Tuning | 加速页提供快捷的频率/睿频调节；设置页的「高级设置」（默认锁定）提供带回读校验的完整控制面 |
+| 🔧 高级设置 Advanced Settings | 默认隐藏，需手动解锁并二次确认：平台能力探测、CPU 频率上下限与睿频模式、软件温度墙、启动处理器数量、NVIDIA 功耗墙、CPU 降压能力判定 |
 
 ## 🧠 低内存设备优化（核显笔记本）
 
@@ -45,6 +46,83 @@ For laptops with **integrated GPU only and small RAM**: Memory Guard auto-frees
 standby memory above a set threshold (never touching game processes), Lite
 Effects mode turns off animations/transparency (backed up, revertible), plus
 practical iGPU tips. The card appears only on iGPU laptops.
+
+## 🔧 高级设置（默认锁定）
+
+设置页里的「高级设置」默认收起，需要手动打开并**二次确认**才会显示内部选项，
+避免不熟悉电源管理的用户误触。解锁状态会记住，但每一项改动都可以还原。
+
+### 为什么不是「电压滑块」
+
+用户态程序**无法读写 CPU 的 MSR 寄存器**，调电压必须满足：
+
+1. 加载内核驱动取得 ring0 权限（如 ThrottleStop 使用的 WinRing0）——需要关闭
+   驱动签名强制 / 内核隔离；
+2. CPU 侧未锁定 FIVR —— Intel **第 11 代起已被锁**（Plundervolt 缓解），
+   **第 12 代及以后完全锁死**，只能改 BIOS；
+3. AMD 没有公开的 MSR 接口，需要 SMU mailbox + 厂商驱动（Ryzen Master）。
+
+这三条都不是换语言能绕过的：用 C/C++ 写一个用户态程序，权限边界完全一样。
+因此本工具**不提供电压滑块**，改为给出**平台能力判定**并引导到对应工具，
+同时提供等效的降温手段（限制最大处理器状态 = 降频 ≈ 降压的功耗与温度收益）。
+
+### 实际提供的能力
+
+| 功能 | 实现方式 | 是否需要管理员 |
+| --- | --- | --- |
+| 最大 / 最小处理器状态 | `powercfg` 子组 GUID，**写入后回读校验** | 是 |
+| 睿频模式（Turbo Boost） | `PERFBOOSTMODE`，取值域从 `Possible Settings` 动态解析 | 是 |
+| 软件温度墙 | 定时读温度，超阈值自动降 `PROCTHROTTLEMAX`，回落自动恢复 | 是 |
+| 启动处理器数量 | `bcdedit /set numproc`，重启生效 | 是 |
+| NVIDIA 功耗墙 | `nvidia-smi -pl`，范围从 `power.min_limit/max_limit` 读取 | 是 |
+| 平台能力报告 | CPU 型号/代数、OEM、温度源、降压可行性 | 否 |
+
+### 针对不同品牌 / 平台的适配
+
+代码里没有任何「某某品牌就这样」的硬编码假设，全部靠探测：
+
+- **每项设置先探测是否存在**：`powercfg /query` 解析取值域，不存在或只读的
+  直接隐藏，而不是点了报错；
+- **写入后回读校验**：联想 / 戴尔 / 惠普 / 华硕的电源管理服务与部分 OEM BIOS
+  会覆盖写入，回读不一致时如实显示「写入被系统覆盖（当前 X）」；
+- **枚举项动态生成**：睿频模式在 Win10 通常只有 0/1/2，Win11 + 部分 CPU 多出
+  3/4，个别 OEM 只暴露 0/1——选项按实测结果生成，不写死；
+- **隐藏项走注册表读取**：`PERFBOOSTMODE`、`EPP` 在多数系统上默认隐藏，
+  非管理员查不到，改从
+  `HKLM\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\{方案}\...`
+  读实际生效值；
+- **温度多源降级**：LibreHardwareMonitor → OpenHardwareMonitor → ACPI 参考值，
+  全部不可用时明确显示「未检测到温度传感器」并隐藏温度墙的实际作用；
+- **WMI 后端自动切换**：Win11 24H2 已移除 `wmic`，自动回退到 PowerShell CIM。
+
+> 温度读取依赖第三方传感器。台式机主板通常不通过 ACPI 暴露 CPU 温度，
+> 建议安装并运行 [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)，
+> 温度墙才有数据可用。
+
+### 安全设计
+
+- 最大处理器状态下限**钳制在 25%**，防止误拉到 0 导致系统卡死无法操作；
+- 越界值在写入前就被拒绝；
+- 温度墙有 5°C 回差，避免在阈值附近反复升降频；
+- 所有 `powercfg` 改动作用于**当前电源方案**，用「恢复默认」即可回到 100/5/睿频启用。
+
+### English
+
+Settings → **Advanced Settings**, collapsed by default and behind a confirmation
+dialog. It exposes CPU frequency caps, boost mode, a software thermal wall, boot
+processor count and the NVIDIA power limit.
+
+There is **no voltage slider**: user-mode code cannot access MSRs. Doing so needs
+a kernel driver plus an unlocked FIVR, and Intel locked FIVR from 11th gen and
+fully from 12th gen. Writing the tool in C/C++ would not change that — the
+privilege boundary is the kernel, not the language. Instead the panel reports
+whether undervolting is feasible on your platform and points to the right tool
+(ThrottleStop / Ryzen Master / BIOS), while offering the equivalent thermal and
+power benefit through max-processor-state limiting.
+
+Every setting is **probed before writing and verified by reading back**; values
+overridden by an OEM power service or BIOS are reported honestly rather than
+silently faked.
 
 ## 🖥️ 界面预览 UI
 
@@ -131,6 +209,8 @@ FrameBoost/
 │   │   ├── cleaner.py     # 垃圾扫描清理
 │   │   ├── booster.py     # 加速核心（电源 / 内存 / 进程 / 游戏模式）
 │   │   ├── memopt.py      # 低内存设备优化（核显笔记本）
+│   │   ├── hwtune.py      # 硬件调校（频率/睿频/温度墙/核心数/GPU 功耗墙 + 能力探测）
+│   │   ├── prefs.py       # 轻量偏好存储（%LOCALAPPDATA%\FrameBoost\prefs.json）
 │   │   ├── network.py     # 网络优化（快照 / 还原）
 │   │   ├── startup.py     # 启动项管理
 │   │   ├── games.py       # 游戏专属配置与检测
@@ -141,7 +221,8 @@ FrameBoost/
 │   │   ├── disk.py        # 磁盘空间分析
 │   │   ├── automation.py  # 开机自启 / 计划任务自动清理
 │   │   └── diagnostics.py # 诊断报告导出
-│   └── ui/                # 7 个页面 + 性能悬浮窗
+│   └── ui/                # 7 个页面 + 性能悬浮窗 + 高级设置面板
+│       └── adv_panel.py   # 高级设置（默认锁定）
 └── assets/
 ```
 

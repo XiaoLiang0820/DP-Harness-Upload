@@ -12,6 +12,7 @@ from ..core import admin, automation, cleaner
 from ..i18n import Translator
 from ..widgets import Card, ToggleSwitch
 from . import Page
+from .adv_panel import AdvancedPanel
 
 
 class SettingsPage(Page):
@@ -79,6 +80,10 @@ class SettingsPage(Page):
         safe_lay.addLayout(safe_col, 1)
         safe_lay.addWidget(self.safe_switch)
         content_lay.addWidget(safe_card)
+
+        # 高级设置（默认锁定，解锁后才显示内部选项）
+        self.adv_panel = AdvancedPanel(self.translator, self.main_window)
+        content_lay.addWidget(self.adv_panel)
 
         # 自动清理（开机自启 / 定时）
         auto_card = Card()
@@ -231,6 +236,9 @@ class SettingsPage(Page):
     # ------------------------------------------------------------------ #
     def refresh_on_show(self) -> None:
         self._load_automation_state()
+        # 重新探测温度与当前电源设置（进入设置页时刷新一次）
+        if self.adv_panel.is_unlocked():
+            self.adv_panel.refresh()
 
     def _load_automation_state(self) -> None:
         self.auto_startup_switch.blockSignals(True)

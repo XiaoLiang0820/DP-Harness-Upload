@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QStackedWidget, QButtonGroup,
 )
 
 from . import version, theme
-from .core import admin
+from .core import admin, hwtune, prefs
 from .i18n import Translator
 from .ui.boost import BoostPage
 from .ui.clean import CleanPage
@@ -19,7 +19,7 @@ from .ui.home import HomePage
 from .ui.settings import SettingsPage
 from .ui.startup import StartupPage
 from .ui.overlay import OverlayWindow
-from .widgets import fade_in
+from .widgets import TaskThread, fade_in
 
 # 导航项：key, 图标, i18n 键
 NAV = [
@@ -131,6 +131,53 @@ class MainWindow(QMainWindow):
 
         self._nav_buttons["home"].setChecked(True)
         self.retranslate()
+        self._init_thermal_guard()
+
+    # ------------------------------------------------------------------ #
+    # 温度墙守护（全局定时，与当前停在哪个页面无关）
+    # ------------------------------------------------------------------ #
+    def _init_thermal_guard(self) -> None:
+        self._thermal_busy = False
+        self._thermal_thread: TaskThread | None = None
+        self._thermal_timer = QTimer(self)
+        self._thermal_timer.setInterval(5000)
+        self._thermal_timer.timeout.connect(self._thermal_tick)
+        self.sync_thermal_guard()
+
+    def sync_thermal_guard(self) -> None:
+        """按配置启停温度墙定时器（设置页开关变化后调用）."""
+        if prefs.get("thermal_guard", False):
+            if not self._thermal_timer.isActive():
+                self._thermal_timer.start()
+        else:
+            self._thermal_timer.stop()
+
+    def _thermal_tick(self) -> None:
+        if self._thermal_busy:
+            return
+        self._thermal_busy = True
+        threshold = int(prefs.get("thermal_threshold", 90))
+        floor_pct = int(prefs.get("thermal_floor", 70))
+        thread = TaskThread(lambda: hwtune.thermal_step(threshold, floor_pct), self)
+        thread.result.connect(self._on_thermal_result)
+        thread.error.connect(lambda _msg: None)
+        thread.finished.connect(self._on_thermal_done)
+        self._thermal_thread = thread
+        thread.start()
+
+    def _on_thermal_done(self) -> None:
+        self._thermal_busy = False
+
+    def _on_thermal_result(self, res: dict) -> None:
+        # 只在「开始降频 / 恢复」这两个状态跃迁时提示，避免每 5 秒刷屏
+        action = res.get("action")
+        if action == "throttle":
+            self.statusBar().showMessage(
+                self.translator.tr("thermal_toast_throttle",
+                                   temp=res.get("temp"), pct=res.get("applied")), 6000)
+        elif action == "restore":
+            self.statusBar().showMessage(
+                self.translator.tr("thermal_toast_restore", temp=res.get("temp")), 6000)
 
     # ------------------------------------------------------------------ #
     def goto_page(self, key: str) -> None:

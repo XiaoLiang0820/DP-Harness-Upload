@@ -1,10 +1,29 @@
-"""FrameBoost 极帧加速 — 设备识别（台式机 / 游戏本 / 轻薄本、OEM、电池）."""
+"""FrameBoost 极帧加速 — 设备识别（台式机 / 游戏本 / 轻薄本、OEM、电池）.
+
+形态判定以「是否有电池」为主，辅以机箱类型（Win32_SystemEnclosure.ChassisTypes）
+兜底：电池损坏、被驱动禁用或 OEM 未上报时，psutil 会返回 None，仅靠电池会把
+笔记本误判成台式机，导致面向核显笔记本的功能不显示。
+"""
 
 from __future__ import annotations
 
+import re
+import subprocess
 import winreg
 
 from . import gpu
+
+# SMBIOS 机箱类型中属于「移动设备」的取值
+_LAPTOP_CHASSIS = {
+    8,   # Portable
+    9,   # Laptop
+    10,  # Notebook
+    11,  # Hand Held
+    14,  # Sub Notebook
+    30,  # Tablet
+    31,  # Convertible
+    32,  # Detachable
+}
 
 
 def _bios_field(name: str) -> str:
@@ -47,6 +66,29 @@ def battery_state() -> dict:
         return {"present": False, "percent": None, "plugged": True}
 
 
+def chassis_types() -> list[int]:
+    """读取 SMBIOS 机箱类型（Win32_SystemEnclosure.ChassisTypes）.
+
+    返回空列表表示查询失败（虚拟机、精简系统、PowerShell 不可用等）。
+    仅在「没有电池」时才需要调用，用于把电池异常的真笔记本认回来。
+    """
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+             "-Command",
+             "Get-CimInstance -ClassName Win32_SystemEnclosure "
+             "-ErrorAction SilentlyContinue | "
+             "Select-Object -ExpandProperty ChassisTypes"],
+            capture_output=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if proc.returncode != 0 or not proc.stdout:
+            return []
+        text = (proc.stdout or b"").decode("utf-8", "ignore")
+        return sorted({int(m) for m in re.findall(r"\d+", text)})
+    except Exception:
+        return []
+
+
 def ram_size_gb() -> int:
     """物理内存大小（GB，四舍五入）；不可用时返回 0."""
     try:
@@ -67,9 +109,16 @@ def detect_device(force: bool = False) -> dict:
     gs = gpu.get_gpu_stats()
     gpu_name = gs[0] if gs else ""
     bat = battery_state()
-    is_laptop = bat["present"]
     vendor = gpu.gpu_vendor(gpu_name)
     discrete = gpu.is_discrete(gpu_name)
+
+    # 形态判定：电池优先；没有电池时用机箱类型兜底，
+    # 把「电池损坏/被禁用」的笔记本认回来（台式机仍判为 False）。
+    chassis: list[int] = []
+    is_laptop = bool(bat["present"])
+    if not is_laptop:
+        chassis = chassis_types()
+        is_laptop = any(c in _LAPTOP_CHASSIS for c in chassis)
 
     if not is_laptop:
         kind = "desktop"
@@ -87,6 +136,7 @@ def detect_device(force: bool = False) -> dict:
         "gpu_vendor": vendor,
         "discrete_gpu": discrete,
         "battery": bat,
+        "chassis": chassis,
         "ram_gb": ram_size_gb(),
     }
     return _CACHE
